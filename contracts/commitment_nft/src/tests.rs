@@ -313,4 +313,3 @@ fn test_transfer() {
 
     // TODO: Test transfer when implemented
 }
-

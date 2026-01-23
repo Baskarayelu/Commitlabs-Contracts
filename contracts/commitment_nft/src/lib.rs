@@ -25,6 +25,7 @@ pub enum Error {
     InvalidCommitmentType = 6,
     InvalidAmount = 7,
     TokenNotFound = 8,
+    NotExpired = 9,
 }
 
 #[contracttype]
@@ -212,11 +213,31 @@ impl CommitmentNFTContract {
     }
 
     /// Transfer NFT to new owner
-    pub fn transfer(_e: Env, _from: Address, _to: Address, _token_id: u32) {
-        // TODO: Verify ownership
-        // TODO: Check if transfer is allowed (not locked)
-        // TODO: Update owner
-        // TODO: Emit transfer event
+    pub fn transfer(e: Env, from: Address, to: Address, token_id: u32) -> Result<(), Error> {
+        from.require_auth();
+        let current_owner: Address = e
+            .storage()
+            .persistent()
+            .get(&DataKey::Owner(token_id))
+            .ok_or(Error::TokenNotFound)?;
+
+        if current_owner != from {
+            return Err(Error::Unauthorized);
+        }
+
+        // Update ownership mapping
+        e.storage().persistent().set(&DataKey::Owner(token_id), &to);
+
+        // Update NFT data
+        let mut nft: CommitmentNFT = e
+            .storage()
+            .persistent()
+            .get(&DataKey::Nft(token_id))
+            .ok_or(Error::TokenNotFound)?;
+        nft.owner = to.clone();
+        e.storage().persistent().set(&DataKey::Nft(token_id), &nft);
+
+        Ok(())
     }
 
     /// Check if NFT is active
@@ -238,10 +259,21 @@ impl CommitmentNFTContract {
     }
 
     /// Mark NFT as settled (after maturity)
-    pub fn settle(_e: Env, _token_id: u32) {
-        // TODO: Verify expiration
-        // TODO: Mark as inactive
-        // TODO: Emit settle event
+    pub fn settle(e: Env, token_id: u32) -> Result<(), Error> {
+        let mut nft: CommitmentNFT = e
+            .storage()
+            .persistent()
+            .get(&DataKey::Nft(token_id))
+            .ok_or(Error::TokenNotFound)?;
+
+        if e.ledger().timestamp() < nft.metadata.expires_at {
+            return Err(Error::NotExpired);
+        }
+
+        nft.is_active = false;
+        e.storage().persistent().set(&DataKey::Nft(token_id), &nft);
+
+        Ok(())
     }
 }
 
