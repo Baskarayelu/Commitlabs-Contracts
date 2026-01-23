@@ -1,4 +1,5 @@
 #![no_std]
+
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, log, token, Address, Env, IntoVal, String,
     Symbol, Vec,
@@ -108,6 +109,25 @@ fn call_nft_mint(
     e.invoke_contract::<u32>(nft_contract, &Symbol::new(e, "mint"), args)
 }
 
+// Storage helpers
+fn read_commitment(e: &Env, commitment_id: &String) -> Option<Commitment> {
+    e.storage()
+        .instance()
+        .get::<_, Commitment>(&DataKey::Commitment(commitment_id.clone()))
+}
+
+fn set_commitment(e: &Env, commitment: &Commitment) {
+    e.storage()
+        .instance()
+        .set(&DataKey::Commitment(commitment.commitment_id.clone()), commitment);
+}
+
+fn has_commitment(e: &Env, commitment_id: &String) -> bool {
+    e.storage()
+        .instance()
+        .has(&DataKey::Commitment(commitment_id.clone()))
+}
+
 #[contract]
 pub struct CommitmentCoreContract;
 
@@ -153,6 +173,7 @@ impl CommitmentCoreContract {
         // This is a simplified version - in production you might want a more robust ID generation
         String::from_str(e, "commitment_") // We'll extend this with a proper implementation later
     }
+
     /// Initialize the core commitment contract
     pub fn initialize(e: Env, admin: Address, nft_contract: Address) {
         // Check if already initialized
@@ -235,9 +256,7 @@ impl CommitmentCoreContract {
         };
 
         // Store commitment data
-        e.storage()
-            .instance()
-            .set(&DataKey::Commitment(commitment_id.clone()), &commitment);
+        set_commitment(&e, &commitment);
 
         // Update owner's commitment list
         let mut owner_commitments = e
@@ -279,9 +298,7 @@ impl CommitmentCoreContract {
 
     /// Get commitment details
     pub fn get_commitment(e: Env, commitment_id: String) -> Commitment {
-        e.storage()
-            .instance()
-            .get::<_, Commitment>(&DataKey::Commitment(commitment_id))
+        read_commitment(&e, &commitment_id)
             .unwrap_or_else(|| panic!("Commitment not found"))
     }
 
@@ -326,11 +343,77 @@ impl CommitmentCoreContract {
     }
 
     /// Check if commitment rules are violated
-    pub fn check_violations(_e: Env, _commitment_id: String) -> bool {
-        // TODO: Check if max_loss_percent exceeded
-        // TODO: Check if duration expired
-        // TODO: Check other rule violations
-        false
+    /// Returns true if any rule violation is detected (loss limit or duration)
+    pub fn check_violations(e: Env, commitment_id: String) -> bool {
+        let commitment = read_commitment(&e, &commitment_id)
+            .unwrap_or_else(|| panic!("Commitment not found"));
+
+        // Skip check if already settled or violated
+        let active_status = String::from_str(&e, "active");
+        if commitment.status != active_status {
+            return false; // Already processed
+        }
+
+        let current_time = e.ledger().timestamp();
+
+        // Check loss limit violation
+        // Calculate loss percentage: ((amount - current_value) / amount) * 100
+        let loss_amount = commitment.amount - commitment.current_value;
+        let loss_percent = if commitment.amount > 0 {
+            // Use i128 arithmetic to avoid overflow
+            // loss_percent = (loss_amount * 100) / amount
+            (loss_amount * 100) / commitment.amount
+        } else {
+            0
+        };
+
+        // Convert max_loss_percent (u32) to i128 for comparison
+        let max_loss = commitment.rules.max_loss_percent as i128;
+        let loss_violated = loss_percent > max_loss;
+
+        // Check duration violation (expired)
+        let duration_violated = current_time >= commitment.expires_at;
+
+        // Return true if any violation exists
+        loss_violated || duration_violated
+    }
+
+    /// Get detailed violation information
+    /// Returns a tuple: (has_violations, loss_violated, duration_violated, loss_percent, time_remaining)
+    pub fn get_violation_details(
+        e: Env,
+        commitment_id: String,
+    ) -> (bool, bool, bool, i128, u64) {
+        let commitment = read_commitment(&e, &commitment_id)
+            .unwrap_or_else(|| panic!("Commitment not found"));
+
+        let current_time = e.ledger().timestamp();
+
+        // Calculate loss percentage
+        let loss_amount = commitment.amount - commitment.current_value;
+        let loss_percent = if commitment.amount > 0 {
+            (loss_amount * 100) / commitment.amount
+        } else {
+            0
+        };
+
+        // Check loss limit violation
+        let max_loss = commitment.rules.max_loss_percent as i128;
+        let loss_violated = loss_percent > max_loss;
+
+        // Check duration violation
+        let duration_violated = current_time >= commitment.expires_at;
+
+        // Calculate time remaining (0 if expired)
+        let time_remaining = if current_time < commitment.expires_at {
+            commitment.expires_at - current_time
+        } else {
+            0
+        };
+
+        let has_violations = loss_violated || duration_violated;
+
+        (has_violations, loss_violated, duration_violated, loss_percent, time_remaining)
     }
 
     /// Settle commitment at maturity
