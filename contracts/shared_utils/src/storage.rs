@@ -150,41 +150,66 @@ impl Storage {
 mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as TestAddress;
+    use soroban_sdk::{contract, contractimpl};
+
+    // Dummy contract used to provide a valid contract context for storage access
+    #[contract]
+    pub struct TestContract;
+
+    #[contractimpl]
+    impl TestContract {
+        pub fn stub() {}
+    }
 
     #[test]
     fn test_initialization() {
         let env = Env::default();
-        
-        assert!(!Storage::is_initialized(&env));
-        
-        Storage::set_initialized(&env);
-        assert!(Storage::is_initialized(&env));
+        let contract_id = env.register_contract(None, TestContract);
+
+        env.as_contract(&contract_id, || {
+            assert!(!Storage::is_initialized(&env));
+
+            Storage::set_initialized(&env);
+            assert!(Storage::is_initialized(&env));
+        });
     }
 
     #[test]
     fn test_admin_storage() {
         let env = Env::default();
         let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
-        
-        Storage::set_initialized(&env);
-        Storage::set_admin(&env, &admin);
-        
-        let stored_admin = Storage::get_admin(&env);
-        assert_eq!(stored_admin, admin);
+
+        let contract_id = env.register_contract(None, TestContract);
+
+        env.as_contract(&contract_id, || {
+            Storage::set_initialized(&env);
+            Storage::set_admin(&env, &admin);
+
+            let stored_admin = Storage::get_admin(&env);
+            assert_eq!(stored_admin, admin);
+        });
     }
 
     #[test]
     #[should_panic(expected = "Contract not initialized")]
     fn test_require_initialized_fails() {
         let env = Env::default();
-        Storage::require_initialized(&env);
+        let contract_id = env.register_contract(None, TestContract);
+
+        env.as_contract(&contract_id, || {
+            Storage::require_initialized(&env);
+        });
     }
 
     #[test]
     #[should_panic(expected = "Contract already initialized")]
     fn test_require_not_initialized_fails() {
         let env = Env::default();
-        Storage::set_initialized(&env);
-        Storage::require_not_initialized(&env);
+        let contract_id = env.register_contract(None, TestContract);
+
+        env.as_contract(&contract_id, || {
+            Storage::set_initialized(&env);
+            Storage::require_not_initialized(&env);
+        });
     }
 }

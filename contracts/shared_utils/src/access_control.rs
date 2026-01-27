@@ -110,28 +110,49 @@ mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as TestAddress;
     use super::super::storage::Storage;
+    use soroban_sdk::{contract, contractimpl};
+
+    // Dummy contract used to provide a valid contract context for access control tests
+    #[contract]
+    pub struct TestContract;
+
+    #[contractimpl]
+    impl TestContract {
+        pub fn stub() {}
+    }
 
     #[test]
     fn test_is_admin() {
         let env = Env::default();
         let admin = <soroban_sdk::Address as TestAddress>::generate(&env);
-        
-        Storage::set_initialized(&env);
-        Storage::set_admin(&env, &admin);
-        
-        assert!(AccessControl::is_admin(&env, &admin));
-        
-        let other = <soroban_sdk::Address as TestAddress>::generate(&env);
-        assert!(!AccessControl::is_admin(&env, &other));
+
+        let contract_id = env.register_contract(None, TestContract);
+
+        env.as_contract(&contract_id, || {
+            Storage::set_initialized(&env);
+            Storage::set_admin(&env, &admin);
+
+            assert!(AccessControl::is_admin(&env, &admin));
+
+            let other = <soroban_sdk::Address as TestAddress>::generate(&env);
+            assert!(!AccessControl::is_admin(&env, &other));
+        });
     }
 
     #[test]
+    #[should_panic(expected = "Unauthorized function call for address")]
     fn test_require_owner() {
         let env = Env::default();
         let owner = <soroban_sdk::Address as TestAddress>::generate(&env);
-        
-        // This would normally require auth, but in tests we can't easily set that up
-        // So we just verify the logic structure
-        AccessControl::require_owner(&env, &owner, &owner);
+
+        let contract_id = env.register_contract(None, TestContract);
+
+        env.as_contract(&contract_id, || {
+            // In a real contract, the host would be provided with proper auth
+            // context for `owner`. In this unit test we don't set up auth
+            // simulation, so `require_auth` will cause an auth error panic.
+            // We assert that this auth check is actually happening.
+            AccessControl::require_owner(&env, &owner, &owner);
+        });
     }
 }

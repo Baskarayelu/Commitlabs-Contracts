@@ -428,8 +428,14 @@ impl CommitmentCoreContract {
         let current_time = e.ledger().timestamp();
 
         // Check loss limit violation
-        // Calculate loss percentage using shared utilities
-        let loss_percent = SafeMath::loss_percent(commitment.amount, commitment.current_value);
+        // Calculate loss percentage using shared utilities, but handle zero-amount
+        // commitments gracefully to avoid panics. A zero-amount commitment cannot
+        // meaningfully violate a loss limit, so we treat its loss percent as 0.
+        let loss_percent = if commitment.amount > 0 {
+            SafeMath::loss_percent(commitment.amount, commitment.current_value)
+        } else {
+            0
+        };
 
         // Convert max_loss_percent (u32) to i128 for comparison
         let max_loss = commitment.rules.max_loss_percent as i128;

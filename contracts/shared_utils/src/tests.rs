@@ -8,7 +8,16 @@ mod integration_tests {
     use crate::storage::Storage;
     use crate::access_control::AccessControl;
     use crate::events::Events;
-    use soroban_sdk::{Env, String as SorobanString};
+    use soroban_sdk::{Env, String as SorobanString, contract, contractimpl};
+
+    // Dummy contract used to provide a valid contract context for integration tests
+    #[contract]
+    pub struct TestContract;
+
+    #[contractimpl]
+    impl TestContract {
+        pub fn stub() {}
+    }
 
     #[test]
     fn test_math_and_validation_integration() {
@@ -25,26 +34,33 @@ mod integration_tests {
     #[test]
     fn test_time_and_storage_integration() {
         let env = Env::default();
-        
-        // Set up storage
-        Storage::set_initialized(&env);
-        let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
-        Storage::set_admin(&env, &admin);
-        
-        // Use time utilities
-        let expiration = TimeUtils::calculate_expiration(&env, 30);
-        assert!(expiration > TimeUtils::now(&env));
+        let contract_id = env.register_contract(None, TestContract);
+
+        env.as_contract(&contract_id, || {
+            // Set up storage
+            Storage::set_initialized(&env);
+            let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+            Storage::set_admin(&env, &admin);
+
+            // Use time utilities
+            let expiration = TimeUtils::calculate_expiration(&env, 30);
+            assert!(expiration > TimeUtils::now(&env));
+        });
     }
 
     #[test]
     fn test_access_control_and_storage() {
         let env = Env::default();
         let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
-        
-        Storage::set_initialized(&env);
-        Storage::set_admin(&env, &admin);
-        
-        assert!(AccessControl::is_admin(&env, &admin));
+
+        let contract_id = env.register_contract(None, TestContract);
+
+        env.as_contract(&contract_id, || {
+            Storage::set_initialized(&env);
+            Storage::set_admin(&env, &admin);
+
+            assert!(AccessControl::is_admin(&env, &admin));
+        });
     }
 
     #[test]
